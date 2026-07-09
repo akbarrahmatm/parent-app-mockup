@@ -1,50 +1,66 @@
-# Welcome to your Expo app 👋
+# Parent App Mockup
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+This project is an Expo app designed to serve as a parent application capable of launching and interacting with mini-applications (Miniapps). It demonstrates core functionalities like:
 
-## Get started
+- **Miniapp Integration**: Seamlessly launching and displaying mini-applications within the main app.
+- **NFC Bridge**: Utilizing an NFC bridge to facilitate communication between the parent app and the Miniapps, enabling NFC-related functionalities (read, write, cancel, check support).
+- **Custom Header Navigation**: Implementing custom headers for Miniapp screens with back navigation and dynamically displayed Miniapp titles.
+- **Theming**: Basic theming support for text elements.
 
-1. Install dependencies
+## Project Structure
 
-   ```bash
-   npm install
-   ```
+- `app/`: Contains the main application screens and navigation.
+  - `(tabs)/`: Tab-based navigation for the main sections.
+    - `index.tsx`: The home screen displaying a list of available Miniapps.
+  - `miniapp/[miniappId].tsx`: The screen responsible for rendering individual Miniapps within a WebView and handling NFC bridge communication.
+- `components/`: Reusable UI components.
+  - `themed-text.tsx`: A custom text component that supports theming.
+- `config/`: Application configuration.
+  - `miniapps.ts`: Defines the list of available Miniapps and their properties (ID, name, URL).
+- `lib/`: Utility functions.
+  - `nfc-bridge.ts`: Implements the NFC bridge logic for communication between the WebView and native NFC functionalities.
+- `hooks/`: Custom React hooks.
+  - `use-color-scheme.ts`: Hook for managing color scheme.
+- `constants/`: Constant values.
+  - `theme.ts`: Defines color schemes for light and dark modes.
 
-2. Start the app
+## How to Run
 
-   ```bash
-   npx expo start
-   ```
+1.  **Install dependencies**:
+    ```bash
+    npm install
+    ```
+2.  **Start the app**:
+    ```bash
+    npx expo start
+    ```
 
-In the output, you'll find options to open the app in a
+    Follow the instructions in your terminal to open the app on a simulator, emulator, or physical device.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Key Features Implemented
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+### Miniapp Navigation and Display
 
-## Get a fresh project
+- The `app/(tabs)/index.tsx` lists available Miniapps using data from `config/miniapps.ts`.
+- Tapping on a Miniapp card navigates to the `app/miniapp/[miniappId].tsx` screen.
+- Each Miniapp is rendered within a `WebView` component, allowing web-based applications to run inside the native app.
 
-When you're ready, run:
+### NFC Bridge Communication
 
-```bash
-npm run reset-project
-```
+- The `lib/nfc-bridge.ts` file defines the communication protocol between the WebView-rendered Miniapp and the native NFC module.
+- `WebViewMessageEvent` is used to intercept messages from the Miniapp.
+- The parent app handles NFC actions (`isSupported`, `read`, `write`, `cancel`) and responds to the Miniapp through JavaScript injection into the WebView.
+- Integration with `react-native-nfc-manager` is conditionally loaded to support NFC functionalities.
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### Custom Header for Miniapps
 
-## Learn more
+- The `miniapp/[miniappId].tsx` screen features a custom header:
+    - A "Back" button to navigate to the previous screen.
+    - A centered title displaying the Miniapp's name.
+    - The title and back button text are styled for better visibility.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Customizations Made
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- **Miniapp Back Button**: Changed text from "Kembali" to "Back" and adjusted color for better contrast.
+- **Miniapp Title Styling**: Ensured the Miniapp title is dark-colored and horizontally centered within the custom header.
+- **Index Page Miniapp Names**: Explicitly set `item.name` text color to black in `app/(tabs)/index.tsx` for consistency.
