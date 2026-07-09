@@ -14,7 +14,7 @@ export default function HomeScreen() {
         renderItem={({ item }) => (
           <Link href={`/miniapp/${item.id}`} asChild>
             <Pressable style={styles.appCard}>
-              <ThemedText type="defaultSemiBold">{item.name}</ThemedText>
+              <ThemedText type="defaultSemiBold" style={{ color: '#000' }}>{item.name}</ThemedText>
               <ThemedText style={styles.url}>{item.url}</ThemedText>
             </Pressable>
           </Link>
