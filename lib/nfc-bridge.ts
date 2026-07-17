@@ -44,13 +44,116 @@ export const postMessageShim = `
       if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
         try {
           window.ReactNativeWebView.postMessage(JSON.stringify(message));
-        } catch (e) {
-          // fall back silently, nothing else we can do from here
-        }
+        } catch (e) {}
       } else {
         originalPostMessage(message);
       }
     };
+  })();
+  true;
+`;
+
+export const networkLogShim = `
+  (function () {
+    if (window.__networkShimmed) return true;
+    window.__networkShimmed = true;
+    function send(method, url, status, statusText, duration, body) {
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            channel: "__network__",
+            method: method,
+            url: (url && url.substring) ? url.substring(0, 500) : String(url),
+            status: status,
+            statusText: statusText,
+            duration: duration,
+            body: body ? String(body).substring(0, 1000) : ''
+          }));
+        } catch (e) {}
+      }
+    }
+
+    // Intercept fetch
+    var origFetch = window.fetch;
+    if (origFetch) {
+      window.fetch = function (url, opts) {
+        var start = Date.now();
+        var method = (opts && opts.method) || 'GET';
+        return origFetch.apply(window, arguments).then(function (res) {
+          var ct = res.headers && res.headers.get ? res.headers.get('content-type') || '' : '';
+          var clone = res.clone();
+          if (ct.indexOf('json') >= 0 || ct.indexOf('text') >= 0) {
+            clone.text().then(function (body) {
+              send(method, url, res.status, res.statusText, Date.now() - start, body);
+            }).catch(function () {
+              send(method, url, res.status, res.statusText, Date.now() - start, '');
+            });
+          } else {
+            send(method, url, res.status, res.statusText, Date.now() - start, '[' + (ct || 'binary') + ']');
+          }
+          return res;
+        }).catch(function (err) {
+          send(method, url, 0, err.message, Date.now() - start, '');
+          throw err;
+        });
+      };
+    }
+
+    // Intercept XMLHttpRequest
+    var origXHR = window.XMLHttpRequest;
+    if (origXHR) {
+      window.XMLHttpRequest = function () {
+        var xhr = new origXHR();
+        var start, method, url;
+        var origOpen = xhr.open;
+        xhr.open = function (m, u) {
+          method = m;
+          url = u;
+          return origOpen.apply(xhr, arguments);
+        };
+        var origSend = xhr.send;
+        xhr.send = function () {
+          start = Date.now();
+          xhr.addEventListener('loadend', function () {
+            send(method, url, xhr.status, xhr.statusText, Date.now() - start, xhr.responseText || '');
+          });
+          return origSend.apply(xhr, arguments);
+        };
+        return xhr;
+      };
+    }
+  })();
+  true;
+`;
+
+export const consoleLogShim = `
+  (function () {
+    if (window.__consoleShimmed) return true;
+    window.__consoleShimmed = true;
+    var cons = window.console;
+    if (!cons) cons = {};
+    function forward(level) {
+      var orig = cons[level] || function() {};
+      cons[level] = function () {
+        var args = Array.prototype.slice.call(arguments);
+        orig.apply(cons, args);
+        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+          try {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              channel: "__console__",
+              level: level,
+              args: args.map(function (a) {
+                try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
+                catch (e) { return String(a); }
+              })
+            }));
+          } catch (e) {}
+        }
+      };
+    }
+    forward('log');
+    forward('warn');
+    forward('error');
   })();
   true;
 `;
