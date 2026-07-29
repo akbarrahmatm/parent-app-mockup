@@ -4,8 +4,11 @@ import { MINIAPPS } from "@/config/miniapps";
 import {
   BridgeRequest,
   buildResponseInjection,
+  clearIndexedDBScript,
+  clearNetworkCacheScript,
   consoleLogShim,
   decodeTagToWire,
+  indexedDBDumpScript,
   networkLogShim,
   NFC_BRIDGE_CHANNEL,
   parseBridgeRequest,
@@ -14,7 +17,7 @@ import {
 } from "@/lib/nfc-bridge";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FlatList, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { BackHandler, FlatList, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
 
@@ -25,6 +28,12 @@ type NetworkEntry = {
   statusText: string;
   duration: number;
   body: string;
+};
+
+type IndexedDBEntry = {
+  name: string;
+  version: number;
+  stores: { name: string; records: any[] }[];
 };
 
 const disableZoomScript = `
@@ -60,10 +69,13 @@ export default function MiniAppScreen() {
   // 'cancel' from the mini app only tears down its own in-flight request.
   const activeRequestId = useRef<string | null>(null);
 
-  const [logMode, setLogMode] = useState<'none' | 'console' | 'network'>('none');
+  const [logMode, setLogMode] = useState<'none' | 'console' | 'network' | 'indexeddb'>('none');
   const [showDropdown, setShowDropdown] = useState(false);
   const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
   const [networkLogs, setNetworkLogs] = useState<NetworkEntry[]>([]);
+  const [offlineMode, setOfflineMode] = useState(false);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [indexedDBData, setIndexedDBData] = useState<IndexedDBEntry[]>([]);
   const logsRef = useRef<FlatList<string>>(null);
   const networkRef = useRef<FlatList<NetworkEntry>>(null);
 
@@ -192,6 +204,45 @@ export default function MiniAppScreen() {
     activeRequestId.current = null;
   }, []);
 
+  const handleBack = useCallback(() => {
+    if (canGoBack) {
+      webviewRef.current?.goBack();
+    } else {
+      router.back();
+    }
+  }, [canGoBack]);
+
+  useEffect(() => {
+    webviewRef.current?.injectJavaScript(`window.__networkBlocked = ${offlineMode}; true;`);
+  }, [offlineMode]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const onBackPress = () => {
+      if (canGoBack) {
+        webviewRef.current?.goBack();
+        return true;
+      }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [canGoBack]);
+
+  useEffect(() => {
+    if (logMode !== 'indexeddb') return;
+    setIndexedDBData([]);
+    webviewRef.current?.injectJavaScript(indexedDBDumpScript);
+  }, [logMode]);
+
+  const handleClearIndexedDB = useCallback(() => {
+    webviewRef.current?.injectJavaScript(clearIndexedDBScript);
+    // re-dump after short delay so deleteDatabase settles
+    setTimeout(() => {
+      webviewRef.current?.injectJavaScript(indexedDBDumpScript);
+    }, 300);
+  }, []);
+
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {
       const raw = event.nativeEvent.data;
@@ -213,6 +264,10 @@ export default function MiniAppScreen() {
             body: parsed.body,
           };
           setNetworkLogs((prev) => [...prev, entry]);
+          return;
+        }
+        if (parsed.channel === "__indexeddb__") {
+          setIndexedDBData(parsed.error ? [{ name: `Error: ${parsed.error}`, version: 0, stores: [] }] : parsed.data);
           return;
         }
       } catch {}
@@ -240,12 +295,7 @@ export default function MiniAppScreen() {
 
   const onNavigationStateChange = useCallback((navState: any) => {
     console.log("WebView navigation:", navState.url);
-    // Di sini Anda bisa menambahkan logika untuk menangani URL redirect
-    // Misalnya, jika navState.url adalah URL callback setelah login, Anda bisa menutup WebView
-    // Contoh:
-    // if (navState.url.startsWith("your-app-scheme://auth/callback")) {
-    //   router.back();
-    // }
+    setCanGoBack(navState.canGoBack);
   }, []);
 
   if (!app) {
@@ -261,17 +311,17 @@ export default function MiniAppScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <Stack.Screen options={{ title: app.name, headerTitleAlign: 'center', headerTitleStyle: { color: "#000" } }} />
+      <Stack.Screen options={{ title: `${app.name}${offlineMode ? ' (Offline)' : ''}`, headerTitleAlign: 'center', headerTitleStyle: { color: "#000" } }} />
       <SafeAreaView edges={["top"]} style={styles.safeArea}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <ThemedText style={styles.back}>Back</ThemedText>
+          <Pressable onPress={handleBack} style={styles.backButton}>
+            <ThemedText style={styles.back}>{canGoBack ? '<' : 'Back'}</ThemedText>
           </Pressable>
           <ThemedText style={{ color: "#000", fontWeight: '600', flex: 1, textAlign: 'center' }}>{app.name}</ThemedText>
           <View>
             <Pressable onPress={() => setShowDropdown(true)} style={styles.backButton}>
               <ThemedText style={styles.back}>
-                {logMode === 'none' ? 'Log' : logMode === 'console' ? 'Console' : 'Network'}
+                {offlineMode ? 'Offline' : logMode === 'none' ? 'Log' : logMode === 'console' ? 'Console' : logMode === 'network' ? 'Network' : 'IndexedDB'}
               </ThemedText>
             </Pressable>
             <Modal transparent visible={showDropdown} onRequestClose={() => setShowDropdown(false)}>
@@ -285,6 +335,13 @@ export default function MiniAppScreen() {
                   </Pressable>
                   <Pressable onPress={() => { setLogMode('network'); setShowDropdown(false); }}>
                     <Text style={[styles.dropdownItem, logMode === 'network' && styles.dropdownActive]}>Network</Text>
+                  </Pressable>
+                  <Pressable onPress={() => { setLogMode('indexeddb'); setShowDropdown(false); }}>
+                    <Text style={[styles.dropdownItem, logMode === 'indexeddb' && styles.dropdownActive]}>IndexedDB</Text>
+                  </Pressable>
+                  <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 4 }} />
+                  <Pressable onPress={() => { setOfflineMode(v => !v); setShowDropdown(false); }}>
+                    <Text style={[styles.dropdownItem, offlineMode && styles.dropdownActive]}>{offlineMode ? '✓ Offline' : '   Offline'}</Text>
                   </Pressable>
                 </View>
               </Pressable>
@@ -341,6 +398,51 @@ export default function MiniAppScreen() {
               onContentSizeChange={() => networkRef.current?.scrollToEnd()}
             />
           </View>
+        )}
+        {logMode === 'indexeddb' && (
+          <Modal visible animationType="slide" onRequestClose={() => setLogMode('none')}>
+            <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a2e' }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#333' }}>
+                <Pressable onPress={() => setLogMode('none')}>
+                  <Text style={{ color: '#4fc3f7', fontSize: 16 }}>Close</Text>
+                </Pressable>
+                <View style={{ flexDirection: 'row', gap: 16 }}>
+                  <Pressable onPress={() => webviewRef.current?.injectJavaScript(indexedDBDumpScript)}>
+                    <Text style={{ color: '#4caf50', fontSize: 16 }}>Refresh</Text>
+                  </Pressable>
+                  <Pressable onPress={() => webviewRef.current?.injectJavaScript(clearNetworkCacheScript)}>
+                    <Text style={{ color: '#ff9800', fontSize: 16 }}>Cache</Text>
+                  </Pressable>
+                  <Pressable onPress={handleClearIndexedDB}>
+                    <Text style={{ color: '#f44336', fontSize: 16 }}>Clear</Text>
+                  </Pressable>
+                </View>
+              </View>
+              <FlatList
+                data={indexedDBData}
+                keyExtractor={(_, i) => String(i)}
+                contentContainerStyle={{ padding: 12 }}
+                renderItem={({ item }) => (
+                  <View style={{ marginBottom: 16 }}>
+                    <Text style={{ color: '#4fc3f7', fontSize: 13, fontWeight: '700', marginBottom: 4 }}>{item.name}</Text>
+                    {item.stores.map((store, si) => [
+                      <Text key={`h-${si}`} style={{ color: '#81c784', fontSize: 12, fontWeight: '600', marginBottom: 4, marginTop: 2 }}>▸ {store.name}</Text>,
+                      ...store.records.map((rec, ri) => (
+                        <View key={`${si}-${ri}`} style={{ backgroundColor: '#16213e', borderRadius: 6, padding: 10, marginBottom: 6 }}>
+                          <Text style={{ color: '#e0e0e0', fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', lineHeight: 18 }}>
+                            {JSON.stringify(rec, null, 2)}
+                          </Text>
+                        </View>
+                      ))
+                    ])}
+                    {item.stores.length === 0 && !item.name.startsWith('Error') && (
+                      <Text style={{ color: '#666', fontSize: 12 }}>(empty)</Text>
+                    )}
+                  </View>
+                )}
+              />
+            </SafeAreaView>
+          </Modal>
         )}
       </View>
     </ThemedView>
